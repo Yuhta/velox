@@ -12,32 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# for generated headers
-include_directories(${CMAKE_BINARY_DIR})
+get_property(
+  dirs
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  PROPERTY INCLUDE_DIRECTORIES)
+foreach(dir ${dirs})
+  message(STATUS "dir='${dir}'")
+endforeach()
 
-set(TEST_LINK_LIBS
-    velox_dwrf_test_utils
-    velox_vector_test_lib
-    gtest
-    gtest_main
-    gmock
-    ${gflags_LIBRARIES}
-    ${GLOG}
-    ${FILESYSTEM})
-
-add_subdirectory(duckdb_reader)
-
-add_executable(velox_parquet_e2e_filter_test E2EFilterTest.cpp)
-
-add_test(velox_parquet_e2e_filter_test velox_dwrf_e2e_filter_test)
+add_library(
+  velox_dwio_native_parquet_reader
+  ParquetReader.cpp
+  ParquetThriftTypes.cpp
+  PageDecoder.cpp
+  ParquetData.cpp
+  ParquetColumnReader.cpp
+  Statistics.cpp
+  StructColumnReader.cpp)
 
 target_link_libraries(
-  velox_parquet_e2e_filter_test
-  velox_e2e_filter_test_base
-  velox_dwio_parquet_writer
   velox_dwio_native_parquet_reader
-  ${LZ4}
-  ${LZO}
-  ${ZSTD}
-  ${ZLIB_LIBRARIES}
-  ${TEST_LINK_LIBS})
+  velox_type
+  velox_dwio_common
+  velox_dwio_dwrf_common
+  velox_dwio_dwrf_proto
+  ${THRIFTLIB}
+  ${FMT})
+target_include_directories(velox_dwio_native_parquet_reader
+                           PUBLIC /usr/local/include/)

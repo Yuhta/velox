@@ -29,6 +29,13 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
       common::ScanSpec* scanSpec,
       FlatMapContext flatMapContext);
 
+  SelectiveStructColumnReader(
+      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      dwio::common::FormatParams& params,
+      common::ScanSpec* scanSpec,
+      const TypePtr& type)
+      : SelectiveColumnReader(requestedType, params, scanSpec, type) {}
+
   void resetFilterCaches() override {
     for (auto& child : children_) {
       child->resetFilterCaches();
@@ -64,7 +71,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
 
   std::vector<uint32_t> filterRowGroups(
       uint64_t rowGroupSize,
-      const StatsContext& context) const override;
+      const dwio::common::StatsWriterInfo& context) const override;
 
   void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
       override;
@@ -128,7 +135,7 @@ class SelectiveStructColumnReader : public SelectiveColumnReader {
     return debugString_;
   }
 
- private:
+ protected:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<SelectiveColumnReader>> children_;
   // Sequence number of output batch. Checked against ColumnLoaders

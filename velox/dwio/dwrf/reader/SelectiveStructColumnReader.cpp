@@ -66,7 +66,7 @@ SelectiveStructColumnReader::SelectiveStructColumnReader(
 
 std::vector<uint32_t> SelectiveStructColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
-    const StatsContext& context) const {
+    const dwio::common::StatsWriterInfo& context) const {
   auto stridesToSkip =
       SelectiveColumnReader::filterRowGroups(rowGroupSize, context);
   for (const auto& child : children_) {

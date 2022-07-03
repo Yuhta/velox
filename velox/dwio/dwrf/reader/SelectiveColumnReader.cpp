@@ -55,6 +55,20 @@ void ScanState::updateRawState() {
 }
 
 SelectiveColumnReader::SelectiveColumnReader(
+    memory::MemoryPool& memoryPool,
+    std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+    common::ScanSpec* scanSpec,
+    // TODO: why is data type instead of requested type passed in?
+    const TypePtr& type,
+    FlatMapContext flatMapContext)
+    : ColumnReader(memoryPool, std::move(requestedType)),
+      scanSpec_(scanSpec),
+      type_{type},
+      rowsPerRowGroup_{static_cast<uint32_t>(-1)} {
+  EncodingKey encodingKey{nodeType_->id, flatMapContext_.sequence};
+}
+
+SelectiveColumnReader::SelectiveColumnReader(
     std::shared_ptr<const dwio::common::TypeWithId> requestedType,
     StripeStreams& stripe,
     common::ScanSpec* scanSpec,
@@ -75,11 +89,24 @@ SelectiveColumnReader::SelectiveColumnReader(
       encodingKey.forKind(proto::Stream_Kind_ROW_INDEX), false);
 }
 
+SelectiveColumnReader::SelectiveColumnReader(
+    std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+    dwio::common::FormatParams& formatParams,
+    common::ScanSpec* scanSpec,
+    const TypePtr& type)
+    : ColumnReader(std::move(requestedType), formatParams),
+      scanSpec_(scanSpec),
+      type_{type} {}
+
 std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
-    const StatsContext& context) const {
+    const dwio::common::StatsWriterInfo& context) const {
+  if (formatData_) {
+    return formatData_->filterRowGroups(*scanSpec_, rowGroupSize, context);
+  }
+  const auto& statsContext = *reinterpret_cast<const StatsContext*>(&context);
   if ((!index_ && !indexStream_) || !scanSpec_->filter()) {
-    return ColumnReader::filterRowGroups(rowGroupSize, context);
+    return ColumnReader::filterRowGroups(rowGroupSize, statsContext);
   }
 
   ensureRowGroupIndex();
@@ -89,7 +116,7 @@ std::vector<uint32_t> SelectiveColumnReader::filterRowGroups(
   for (auto i = 0; i < index_->entry_size(); i++) {
     const auto& entry = index_->entry(i);
     auto columnStats =
-        buildColumnStatisticsFromProto(entry.statistics(), context);
+        buildColumnStatisticsFromProto(entry.statistics(), statsContext);
     if (!testFilter(filter, columnStats.get(), rowGroupSize, type_)) {
       VLOG(1) << "Drop stride " << i << " on " << scanSpec_->toString();
       stridesToSkip.push_back(i); // Skipping stride based on column stats.
@@ -114,12 +141,15 @@ void SelectiveColumnReader::seekTo(vector_size_t offset, bool readsNullsOnly) {
   }
 }
 
-void SelectiveColumnReader::prepareNulls(RowSet rows, bool hasNulls) {
+void SelectiveColumnReader::prepareNulls(
+    RowSet rows,
+    bool hasNulls,
+    int32_t extraRows) {
   if (!hasNulls) {
     anyNulls_ = false;
     return;
   }
-  auto numRows = rows.size();
+  auto numRows = rows.size() + extraRows;
   if (useBulkPath()) {
     bool isDense = rows.back() == rows.size() - 1;
     if (!scanSpec_->filter()) {
@@ -327,6 +357,26 @@ void SelectiveColumnReader::addStringValue(folly::StringPiece value) {
   auto copy = copyStringValue(value);
   reinterpret_cast<StringView*>(rawValues_)[numValues_++] =
       StringView(copy, value.size());
+}
+
+bool SelectiveColumnReader::readsNullsOnly() const {
+  auto filter = scanSpec_->filter();
+  if (filter) {
+    auto kind = filter->kind();
+    return kind == common::FilterKind::kIsNull ||
+        (!scanSpec_->keepValues() && kind == common::FilterKind::kIsNotNull);
+  }
+  return false;
+}
+
+void SelectiveColumnReader::setNulls(BufferPtr resultNulls) {
+  resultNulls_ = resultNulls;
+  rawResultNulls_ = resultNulls ? resultNulls->asMutable<uint64_t>() : nullptr;
+  anyNulls_ = rawResultNulls_ &&
+      !bits::isAllSet(rawResultNulls_, 0, numValues_, bits::kNotNull);
+  allNull_ =
+      anyNulls_ && bits::isAllSet(rawResultNulls_, 0, numValues_, bits::kNull);
+  returnReaderNulls_ = false;
 }
 
 void SelectiveColumnReader::resetFilterCaches() {

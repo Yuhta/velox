@@ -18,6 +18,7 @@
 
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
+#include "velox/dwio/common/FormatData.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/dwio/dwrf/common/ByteRLE.h"
 #include "velox/dwio/dwrf/common/Compression.h"
@@ -40,6 +41,14 @@ class ColumnReader {
         nodeType_{type},
         memoryPool_{memoryPool},
         flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
+  explicit ColumnReader(
+      const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      dwio::common::FormatParams& formatParams)
+      : formatData_(formatParams.toFormatData(type)),
+        notNullDecoder_{},
+        nodeType_{type},
+        memoryPool_(formatParams.pool()),
+        flatMapContext_{FlatMapContext::nonFlatMapContext()} {}
 
   // Reads nulls, if any. Sets '*nulls' to nullptr if void
   // the reader has no nulls and there are no incoming
@@ -58,18 +67,27 @@ class ColumnReader {
       VectorPtr& result,
       const uint64_t* incomingNulls);
 
+  std::unique_ptr<dwio::common::FormatData> formatData_;
   std::unique_ptr<ByteRleDecoder> notNullDecoder_;
   const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   memory::MemoryPool& memoryPool_;
   FlatMapContext flatMapContext_;
 
  public:
+  //  ColumnReader(
+  //      memory::MemoryPool& memoryPool,
+  //      std::shared_ptr<const dwio::common::TypeWithId> nodeId);
+
   ColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> nodeId,
       StripeStreams& stripe,
       FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
 
   virtual ~ColumnReader() = default;
+
+  dwio::common::FormatData* formatData() const {
+    return formatData_.get();
+  }
 
   /**
    * Skip number of specified rows.
@@ -92,7 +110,7 @@ class ColumnReader {
   // Stride indices are monotonically increasing.
   virtual std::vector<uint32_t> filterRowGroups(
       uint64_t /*rowGroupSize*/,
-      const StatsContext& /* context */) const {
+      const dwio::common::StatsWriterInfo& /* context */) const {
     static const std::vector<uint32_t> kEmpty;
     return kEmpty;
   }

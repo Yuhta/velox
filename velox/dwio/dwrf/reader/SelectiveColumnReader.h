@@ -20,6 +20,7 @@
 #include "velox/common/process/ProcessBase.h"
 #include "velox/dwio/common/ColumnSelector.h"
 #include "velox/dwio/common/ScanSpec.h"
+#include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/type/Filter.h"
 
@@ -103,11 +104,24 @@ class SelectiveColumnReader : public ColumnReader {
   static constexpr uint64_t kStringBufferSize = 16 * 1024;
 
   SelectiveColumnReader(
+      memory::MemoryPool& memoryPool,
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+      common::ScanSpec* scanSpec,
+      const TypePtr& type,
+      FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
+
+  SelectiveColumnReader(
       std::shared_ptr<const dwio::common::TypeWithId> requestedType,
       StripeStreams& stripe,
       common::ScanSpec* scanSpec,
       const TypePtr& type,
       FlatMapContext flatMapContext = FlatMapContext::nonFlatMapContext());
+
+  SelectiveColumnReader(
+      std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+      dwio::common::FormatParams& formatParams,
+      common::ScanSpec* scanSpec,
+      const TypePtr& type);
 
   /**
    * Read the next group of values into a RowVector.
@@ -183,17 +197,63 @@ class SelectiveColumnReader : public ColumnReader {
     return reinterpret_cast<T*>(rawValues_) + numValues_;
   }
 
+  // Returns a mutable pointer to start of result nulls
+  // bitmap. Ensures that this has at least 'numValues_' + 'size'
+  // capacity and is unique. If extending existing buffer, preserves
+  // previous contents.
   uint64_t* mutableNulls(int32_t size) {
-    DCHECK_GE(resultNulls_->capacity() * 8, numValues_ + size);
+    if (!resultNulls_->unique()) {
+      resultNulls_ = AlignedBuffer::allocate<bool>(
+          numValues_ + size, &memoryPool_, bits::kNotNull);
+      rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
+    }
+    if (resultNulls_->capacity() * 8 < numValues_ + size) {
+      // If a single read() spans many encoding runs then result nulls may
+      // occasionally need extending.
+      AlignedBuffer::reallocate<bool>(
+          &resultNulls_,
+          numValues_ + size + simd::kPadding * 8,
+          bits::kNotNull);
+      rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
+    }
     return rawResultNulls_;
+  }
+
+  // True if this reads contiguous rows starting at 0 and may have
+  // nulls. If so, the nulls decoded from the nulls in encoded data
+  // can be returned directly in the vector in getValues().
+  bool returnReaderNulls() const {
+    return returnReaderNulls_;
   }
 
   void setNumValues(vector_size_t size) {
     numValues_ = size;
   }
 
+  // The number of passing after filtering.
+  int32_t numRows() const {
+    return outputRows_.size();
+  }
+
+  // The number of values copied into the results.
+  int32_t numValues() const {
+    return numValues_;
+  }
   void setNumRows(vector_size_t size) {
     outputRows_.resize(size);
+  }
+
+  // Sets the result nulls to be returned in getValues(). This is used for
+  // combining nulls from multiple encoding runs. nullptr means no nulls.
+  void setNulls(BufferPtr resultNulls);
+
+  // Adds 'bias' to outputt rows between 'firstRow' and end. Used
+  // whenn combining data from multiple encoding runs, where the
+  // output rows are first in terms of position in the encoding entry.
+  void offsetOutputRows(int32_t firstRow, int32_t bias) {
+    for (auto i = firstRow; i < outputRows_.size(); ++i) {
+      outputRows_[i] += bias;
+    }
   }
 
   void setHasNulls() {
@@ -278,7 +338,7 @@ class SelectiveColumnReader : public ColumnReader {
 
   std::vector<uint32_t> filterRowGroups(
       uint64_t rowGroupSize,
-      const StatsContext& context) const override;
+      const dwio::common::StatsWriterInfo& context) const override;
 
   raw_vector<int32_t>& innerNonNullRows() {
     return innerNonNullRows_;
@@ -286,6 +346,10 @@ class SelectiveColumnReader : public ColumnReader {
 
   raw_vector<int32_t>& outerNonNullRows() {
     return outerNonNullRows_;
+  }
+
+  BufferPtr& nullsInReadRange() {
+    return nullsInReadRange_;
   }
 
   // Returns true if no filters or deterministic filters/hooks that
@@ -313,18 +377,27 @@ class SelectiveColumnReader : public ColumnReader {
     return scanState_;
   }
 
- protected:
   static constexpr int8_t kNoValueSize = -1;
   static constexpr uint32_t kRowGroupNotSet = ~0;
+
+  // True if we have an is null filter and optionally return column
+  // values or we have an is not null filter and do not return column
+  // values. This means that only null flags need be accessed.
+  bool readsNullsOnly() const;
 
   template <typename T>
   void ensureValuesCapacity(vector_size_t numRows);
 
-  void prepareNulls(RowSet rows, bool hasNulls);
+  // Prepares the result buffer for nulls for reading 'rows'. Leaves
+  // 'extraSpace' bits worth of space in the nulls buffer.
+  void prepareNulls(RowSet rows, bool hasNulls, int32_t extraRows = 0);
 
+  // Filters 'rows' according to 'is_null'. Only applies to cases where
+  // readsNullsOnly() is true.
   template <typename T>
   void filterNulls(RowSet rows, bool isNull, bool extractValues);
 
+ protected:
   template <typename T>
   void
   prepareRead(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls);
