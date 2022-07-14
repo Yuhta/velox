@@ -613,6 +613,17 @@ std::shared_ptr<BaseVector> BaseVector::createNullConstant(
     return std::make_shared<ConstantVector<ComplexType>>(
         pool, size, true, type, ComplexType());
   }
+
+  if (type->kind() == TypeKind::SHORT_DECIMAL) {
+    return std::make_shared<ConstantVector<ShortDecimal>>(
+        pool, size, true, type, ShortDecimal());
+  }
+
+  if (type->kind() == TypeKind::LONG_DECIMAL) {
+    return std::make_shared<ConstantVector<LongDecimal>>(
+        pool, size, true, type, LongDecimal());
+  }
+
   return BaseVector::createConstant(variant(type->kind()), size, pool);
 }
 
@@ -704,7 +715,7 @@ uint64_t BaseVector::estimateFlatSize() const {
 }
 
 namespace {
-bool isFlatEncoding(VectorEncoding::Simple encoding) {
+bool isReusableEncoding(VectorEncoding::Simple encoding) {
   return encoding == VectorEncoding::Simple::FLAT ||
       encoding == VectorEncoding::Simple::ARRAY ||
       encoding == VectorEncoding::Simple::MAP ||
@@ -716,7 +727,7 @@ bool isFlatEncoding(VectorEncoding::Simple encoding) {
 void BaseVector::prepareForReuse(
     std::shared_ptr<BaseVector>& vector,
     vector_size_t size) {
-  if (!vector.unique() || !isFlatEncoding(vector->encoding())) {
+  if (!vector.unique() || !isReusableEncoding(vector->encoding())) {
     vector = BaseVector::create(vector->type(), size, vector->pool());
     return;
   }

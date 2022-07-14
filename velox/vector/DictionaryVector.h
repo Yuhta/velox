@@ -21,6 +21,7 @@
 #include <folly/container/F14Map.h>
 
 #include "velox/common/base/SimdUtil.h"
+#include "velox/vector/LazyVector.h"
 #include "velox/vector/SimpleVector.h"
 #include "velox/vector/TypeAliases.h"
 
@@ -150,7 +151,17 @@ class DictionaryVector : public SimpleVector<T> {
     if (initialized_) {
       return this;
     }
-    dictionaryValues_ = BaseVector::loadedVectorShared(dictionaryValues_);
+
+    SelectivityVector rows(dictionaryValues_->size(), false);
+    for (vector_size_t i = 0; i < this->size(); i++) {
+      if (!BaseVector::isNullAt(i)) {
+        auto ind = getDictionaryIndex(i);
+        rows.setValid(ind, true);
+      }
+    }
+    rows.updateBounds();
+
+    LazyVector::ensureLoadedRows(dictionaryValues_, rows);
     setInternalState();
     return this;
   }
@@ -201,6 +212,17 @@ class DictionaryVector : public SimpleVector<T> {
     dictionaryValues_ = dictionaryValues;
     initialized_ = false;
     setInternalState();
+  }
+
+  /// Resizes the vector to be of size 'size'. If setNotNull is true
+  /// the newly added elements point to the value at the 0th index.
+  /// If setNotNull is false then the values and isNull is undefined.
+  void resize(vector_size_t size, bool setNotNull = true) override {
+    if (size > BaseVector::length_) {
+      BaseVector::resizeIndices(size, 0, &indices_, &rawIndices_);
+    }
+
+    BaseVector::resize(size, setNotNull);
   }
 
  private:

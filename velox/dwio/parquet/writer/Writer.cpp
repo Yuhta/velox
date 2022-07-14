@@ -15,8 +15,8 @@
  */
 
 #include "velox/dwio/parquet/writer/Writer.h"
-#include <arrow/c/bridge.h>
-#include <arrow/table.h>
+#include <arrow/c/bridge.h> // @manual
+#include <arrow/table.h> // @manual
 #include "velox/vector/arrow/Bridge.h"
 
 namespace facebook::velox::parquet {
@@ -45,9 +45,13 @@ void Writer::write(const RowVectorPtr& data) {
   PARQUET_THROW_NOT_OK(arrowWriter_->WriteTable(*table, 10000));
 }
 
+void Writer::newRowGroup(int32_t numRows) {
+  PARQUET_THROW_NOT_OK(arrowWriter_->NewRowGroup(numRows));
+}
+
 void Writer::close() {
   if (arrowWriter_) {
-    arrowWriter_->Close();
+    PARQUET_THROW_NOT_OK(arrowWriter_->Close());
     finalSink_->write(std::move(stream_->dataBuffer()));
   }
 }

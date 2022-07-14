@@ -21,14 +21,14 @@
 
 #include "velox/vector/ComplexVector.h"
 
-#include <parquet/arrow/writer.h>
+#include <parquet/arrow/writer.h> // @manual
 
 namespace facebook::velox::parquet {
 
-// Utility for caapturing Arrow output into a DataBuffer.
+// Utility for capturing Arrow output into a DataBuffer.
 class DataBufferSink : public arrow::io::OutputStream {
  public:
-  DataBufferSink(memory::MemoryPool& pool) : buffer_(pool) {}
+  explicit DataBufferSink(memory::MemoryPool& pool) : buffer_(pool) {}
 
   arrow::Status Write(const std::shared_ptr<arrow::Buffer>& data) override {
     buffer_.append(
@@ -71,7 +71,7 @@ class DataBufferSink : public arrow::io::OutputStream {
 class Writer {
  public:
   // Constructts a writer with output to 'sink'. A new row group is
-  // started every 'rowsInRowGroup[ top level rows. 'pool' is used for
+  // started every 'rowsInRowGroup' top level rows. 'pool' is used for
   // temporary memory. 'properties' specifies Parquet-specific
   // options.
   Writer(
@@ -89,9 +89,7 @@ class Writer {
   void write(const RowVectorPtr& data);
 
   // Forces a row group boundary before the data added by next write().
-  void newRowGroup(int32_t numRows) {
-    arrowWriter_->NewRowGroup(numRows);
-  }
+  void newRowGroup(int32_t numRows);
 
   // Closes 'this', After close, data can no longer be added and the completed
   // Parquet file is flushed into 'sink' provided at construction. 'sink' stays
