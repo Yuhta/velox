@@ -17,7 +17,7 @@
 #pragma once
 
 #include "velox/dwio/common/BitConcatenation.h"
-#include "velox/dwio/dwrf/common/DirectDecoder.h"
+#include "velox/dwio/common/DirectDecoder.h"
 #include "velox/dwio/dwrf/reader/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/Decoder.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
@@ -218,7 +218,7 @@ class PageDecoder {
   dwio::common::BitConcatenation nullConcatenation_;
 
   // Decoders. Only one will be set at a time.
-  std::unique_ptr<dwrf::DirectDecoder<true>> directDecoder_;
+  std::unique_ptr<dwio::common::DirectDecoder<true>> directDecoder_;
 
   // Add decoders for other encodings here.
 };
@@ -228,7 +228,7 @@ void PageDecoder::readWithVisitor(Visitor& visitor) {
   constexpr bool hasFilter =
       !std::is_same<typename Visitor::FilterType, common::AlwaysTrue>::value;
   constexpr bool filterOnly =
-      std::is_same<typename Visitor::Extract, dwrf::DropValues>::value;
+      std::is_same<typename Visitor::Extract, dwio::common::DropValues>::value;
   constexpr bool hasHook =
       !std::is_same<typename Visitor::HookType, dwio::common::NoHook>::value;
 
